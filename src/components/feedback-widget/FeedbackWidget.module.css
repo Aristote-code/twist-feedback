@@ -1,0 +1,546 @@
+/* Scoped to the widget so it can drop into any host page. */
+
+.root {
+  --tf-accent: #4f46e5;
+  --tf-accent-border: rgba(148, 123, 255, 0.35);
+
+  --tf-overlay: rgba(17, 24, 39, 0.35);
+  --tf-panel: #ffffff;
+  --tf-panel-border: #e5e7eb;
+  --tf-shadow: 0 25px 25px rgba(0, 0, 0, 0.12);
+  --tf-heading: #111827;
+  --tf-text: #374151;
+  --tf-muted: #6b7280;
+  --tf-faint: #9ca3af;
+  --tf-field: #f9fafb;
+  --tf-field-hover: #f3f4f6;
+  --tf-field-border: rgba(17, 24, 39, 0.08);
+  --tf-tile: rgba(17, 24, 39, 0.05);
+  --tf-chip: rgba(17, 24, 39, 0.05);
+  --tf-chip-border: rgba(17, 24, 39, 0.06);
+  --tf-chip-on: rgba(79, 70, 229, 0.1);
+  --tf-danger: #b42318;
+  --tf-success-bg: rgba(79, 70, 229, 0.1);
+
+  /* Hosts can set --twist-feedback-font on :root to use their own font. */
+  font-family: var(--twist-feedback-font, Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--tf-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Values measured from the Featurebase dark widget. */
+.dark {
+  --tf-overlay: rgba(26, 28, 41, 0.5);
+  --tf-panel: rgb(26, 28, 41);
+  --tf-panel-border: rgb(43, 45, 59);
+  --tf-shadow: 0 25px 25px rgba(0, 0, 0, 0.3);
+  --tf-heading: rgb(249, 250, 251);
+  --tf-text: rgb(178, 183, 205);
+  --tf-muted: rgb(178, 183, 205);
+  --tf-faint: rgb(104, 106, 122);
+  --tf-field: rgba(51, 53, 67, 0.2);
+  --tf-field-hover: rgba(51, 53, 67, 0.45);
+  --tf-field-border: rgba(221, 223, 233, 0.05);
+  --tf-tile: rgba(255, 255, 255, 0.05);
+  --tf-chip: rgba(229, 231, 235, 0.08);
+  --tf-chip-border: rgba(229, 231, 235, 0.05);
+  --tf-chip-on: rgba(99, 91, 255, 0.28);
+  --tf-danger: #fda29b;
+  --tf-success-bg: rgba(99, 91, 255, 0.2);
+  color-scheme: dark;
+}
+
+/* :where() keeps these resets at zero specificity so component classes win. */
+:where(.root) *,
+:where(.root) *::before,
+:where(.root) *::after {
+  box-sizing: border-box;
+}
+
+:where(.root) :where(button, input, textarea) {
+  font: inherit;
+  margin: 0;
+}
+
+.root button:focus-visible {
+  outline: 2px solid var(--tf-accent);
+  outline-offset: 2px;
+}
+
+/* Floating "Feedback" tab on the edge of the screen */
+.launcher {
+  position: fixed;
+  top: 50%;
+  z-index: 2147483000;
+  padding: 6px 14px;
+  border: 1px solid var(--tf-accent-border);
+  border-radius: 10px 10px 0 0;
+  background: var(--tf-accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: filter 0.15s ease;
+}
+
+.launcherRight {
+  right: 0;
+  transform: translate(calc(50% - 16px), -50%) rotate(-90deg);
+}
+
+.launcherLeft {
+  left: 0;
+  transform: translate(calc(-50% + 16px), -50%) rotate(90deg);
+}
+
+.launcher:hover {
+  filter: brightness(1.1);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483001;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+  background: var(--tf-overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: tf-fade 0.15s ease-out;
+}
+
+.panel {
+  position: relative;
+  width: 448px;
+  max-width: 100%;
+  margin: auto 0;
+  padding: 24px;
+  border: 1px solid var(--tf-panel-border);
+  border-radius: 16px;
+  background: var(--tf-panel);
+  box-shadow: var(--tf-shadow);
+  outline: none;
+  animation: tf-rise 0.18s ease-out;
+}
+
+.close {
+  position: absolute;
+  top: 20px;
+  right: 22px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--tf-faint);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--tf-heading);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 32px;
+}
+
+.title {
+  margin: 0;
+  color: var(--tf-heading);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 28px;
+  text-wrap: balance;
+}
+
+.subtitle {
+  max-width: 320px;
+  margin: 0;
+  color: var(--tf-muted);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* Category list */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 54px;
+  padding: 12px;
+  border: 1px solid var(--tf-field-border);
+  border-radius: 10px;
+  background: var(--tf-field);
+  color: var(--tf-heading);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s cubic-bezier(0.4, 0, 1, 1), border-color 0.15s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.option:hover {
+  background: var(--tf-field-hover);
+}
+
+.iconTile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 28px;
+  border-radius: 10px;
+  background: var(--tf-tile);
+  color: var(--tf-faint);
+}
+
+.optionLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.shortcut {
+  padding: 0 8px 0 12px;
+  color: var(--tf-faint);
+  opacity: 0.8;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+/* Submit form */
+.formHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 32px;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.input {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid var(--tf-field-border);
+  border-radius: 10px;
+  background: var(--tf-field);
+  color: var(--tf-heading);
+  font-size: 16px;
+  line-height: 24px;
+  transition: border-color 0.15s ease;
+}
+
+.input::placeholder {
+  color: var(--tf-muted);
+  opacity: 0.85;
+}
+
+.input:focus {
+  border-color: var(--tf-accent);
+  box-shadow: 0 0 0 3px var(--tf-chip-on);
+  outline: none;
+}
+
+.textarea {
+  min-height: 130px;
+  padding: 12px;
+  resize: vertical;
+}
+
+.box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--tf-field-border);
+  border-radius: 10px;
+  background: var(--tf-field);
+}
+
+.boxLabel {
+  margin: 0;
+  color: var(--tf-muted);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--tf-chip-border);
+  border-radius: 10px;
+  background: var(--tf-chip);
+  color: var(--tf-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.chip:hover {
+  border-color: var(--tf-accent-border);
+}
+
+.chip[aria-pressed="true"] {
+  border-color: var(--tf-accent);
+  background: var(--tf-chip-on);
+  color: var(--tf-heading);
+}
+
+.emailField {
+  position: relative;
+  display: block;
+}
+
+.emailIcon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  color: var(--tf-faint);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.emailInput {
+  padding-left: 36px;
+}
+
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 8px;
+  border: 1px solid var(--tf-field-border);
+  border-radius: 10px;
+  background: var(--tf-field);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.thumb {
+  width: 56px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  object-position: top;
+}
+
+.attachmentLabel {
+  flex: 1;
+  color: var(--tf-text);
+}
+
+.error {
+  margin: 0;
+  color: var(--tf-danger);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.footerActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.iconButton {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  color: var(--tf-heading);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--tf-field-hover);
+}
+
+.secondary,
+.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.secondary {
+  border: 1px solid var(--tf-field-border);
+  background: var(--tf-field);
+  color: var(--tf-text);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--tf-field-hover);
+}
+
+.primary {
+  border: 1px solid var(--tf-accent-border);
+  background: var(--tf-accent);
+  color: #fff;
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.secondary:disabled,
+.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Thank-you view */
+.done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 8px 4px;
+  text-align: center;
+}
+
+.doneIcon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 8px;
+  border-radius: 999px;
+  background: var(--tf-success-bg);
+  color: var(--tf-accent);
+}
+
+.dark .doneIcon {
+  color: #a5a0ff;
+}
+
+.doneBody {
+  max-width: 340px;
+  margin: 0;
+  color: var(--tf-muted);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.doneActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+@keyframes tf-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes tf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (max-width: 480px) {
+  .overlay {
+    padding: 16px;
+  }
+
+  .panel {
+    padding: 20px 16px;
+  }
+
+  .footerActions {
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .panel {
+    animation: none;
+  }
+
+  .launcher,
+  .option,
+  .chip,
+  .input {
+    transition: none;
+  }
+}

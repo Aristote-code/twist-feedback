@@ -1,0 +1,145 @@
+{
+  "figmaFile": "JsVETF6XMRIZAoNFAYG1lk",
+  "page": "❖ Hugeicons Pro",
+  "note": "Icons used by the app. `as` is the name the app imports from @/components/icons; `solid`/`stroke` are Figma node ids of the Type=Rounded variants; `fallback` is a lucide-react icon used only until the SVG has been fetched.",
+  "icons": [
+    {
+      "name": "home-01",
+      "as": "HomeIcon",
+      "solid": "3658:58852",
+      "stroke": "3658:58839"
+    },
+    {
+      "name": "chatting-01",
+      "as": "MessagesIcon",
+      "solid": "3657:53603",
+      "stroke": "3657:53590"
+    },
+    {
+      "name": "bubble-chat",
+      "as": "ChatIcon",
+      "solid": "3657:51192",
+      "stroke": "3657:51179"
+    },
+    {
+      "name": "help-circle",
+      "as": "HelpIcon",
+      "solid": "3657:13920",
+      "stroke": "3657:13904"
+    },
+    {
+      "name": "megaphone-01",
+      "as": "UpdatesIcon",
+      "solid": "3658:4603",
+      "stroke": "3658:4587"
+    },
+    {
+      "name": "sent",
+      "as": "SendIcon",
+      "solid": "3657:58470",
+      "stroke": "3657:58457"
+    },
+    {
+      "name": "search-01",
+      "as": "SearchIcon",
+      "solid": "3658:114813",
+      "stroke": "3658:114800"
+    },
+    {
+      "name": "arrow-left-01",
+      "as": "ChevronLeftIcon",
+      "solid": "3657:6145",
+      "stroke": "3657:6135"
+    },
+    {
+      "name": "arrow-right-01",
+      "as": "ChevronRightIcon",
+      "solid": "3657:6058",
+      "stroke": "3657:6048"
+    },
+    {
+      "name": "arrow-down-01",
+      "as": "ChevronDownIcon",
+      "solid": "3657:6087",
+      "stroke": "3657:6077"
+    },
+    {
+      "name": "cancel-01",
+      "as": "CloseIcon",
+      "solid": "3657:14589",
+      "stroke": "3657:14579"
+    },
+    {
+      "name": "bug-01",
+      "as": "BugIcon",
+      "solid": "3658:120055",
+      "stroke": "3658:120023"
+    },
+    {
+      "name": "bulb",
+      "as": "IdeaIcon",
+      "solid": "3658:2133",
+      "stroke": "3658:2113"
+    },
+    {
+      "name": "book-open-01",
+      "as": "BookIcon",
+      "solid": "3658:12405",
+      "stroke": "3658:12392"
+    },
+    {
+      "name": "cursor-pointer-01",
+      "as": "CursorIcon",
+      "solid": "3658:129709",
+      "stroke": "3658:129693"
+    },
+    {
+      "name": "message-01",
+      "as": "MessageIcon",
+      "solid": "3657:56473",
+      "stroke": "3657:56460"
+    },
+    {
+      "name": "mail-01",
+      "as": "MailIcon",
+      "solid": "3657:54286",
+      "stroke": "3657:54273",
+      "fallback": "Mail"
+    },
+    {
+      "name": "camera-01",
+      "as": "ScreenshotIcon",
+      "solid": "3658:74203",
+      "stroke": "3658:74184",
+      "fallback": "ScanLine"
+    },
+    {
+      "name": "tick-02",
+      "as": "CheckIcon",
+      "solid": "3657:49847",
+      "stroke": "3657:49837",
+      "fallback": "Check"
+    },
+    {
+      "name": "checkmark-badge-01",
+      "as": "VerifiedIcon",
+      "solid": "3657:49549",
+      "stroke": "3657:49536",
+      "fallback": "BadgeCheck"
+    },
+    {
+      "name": "link-square-02",
+      "as": "ExternalLinkIcon",
+      "solid": "3658:88362",
+      "stroke": "3658:88349",
+      "fallback": "ExternalLink"
+    },
+    {
+      "name": "image-01",
+      "as": "ImageIcon",
+      "solid": "3658:75750",
+      "stroke": "3658:75734",
+      "fallback": "Image"
+    }
+  ]
+}

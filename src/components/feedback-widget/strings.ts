@@ -1,0 +1,53 @@
+import type { Locale } from "@/lib/feedback/config";
+
+// German copy is a first draft. Have the translation team review it.
+export const STRINGS = {
+  en: {
+    launcher: "Feedback",
+    title: "Give us feedback",
+    subtitle: "Tell us how we could make Twist more useful for you and your child.",
+    close: "Close",
+    back: "Back",
+    titlePlaceholder: "Give it a short title",
+    emailPlaceholder: "Your email address (Optional)",
+    takeScreenshot: "Take screenshot",
+    retakeScreenshot: "Retake",
+    capturing: "Capturing…",
+    screenshotAdded: "Screenshot attached",
+    removeScreenshot: "Remove screenshot",
+    screenshotFailed: "Couldn't capture the screen. You can still send your feedback without it.",
+    send: "Send",
+    sending: "Sending…",
+    titleRequired: "Add a short title so we know what it's about.",
+    sendFailed: "Your feedback didn't send. Check your connection and try again.",
+    thanksTitle: "Thanks for your feedback!",
+    thanksBody: "The Twist team reads every message. It helps us decide what to fix and build next.",
+    sendMore: "Send more feedback",
+    done: "Done",
+  },
+  de: {
+    launcher: "Feedback",
+    title: "Gib uns Feedback",
+    subtitle: "Sag uns, wie wir Twist für dich und dein Kind noch hilfreicher machen können.",
+    close: "Schließen",
+    back: "Zurück",
+    titlePlaceholder: "Kurzer Titel",
+    emailPlaceholder: "Deine E-Mail-Adresse (optional)",
+    takeScreenshot: "Screenshot aufnehmen",
+    retakeScreenshot: "Neu aufnehmen",
+    capturing: "Wird aufgenommen…",
+    screenshotAdded: "Screenshot angehängt",
+    removeScreenshot: "Screenshot entfernen",
+    screenshotFailed: "Der Bildschirm konnte nicht aufgenommen werden. Du kannst dein Feedback trotzdem senden.",
+    send: "Senden",
+    sending: "Wird gesendet…",
+    titleRequired: "Gib einen kurzen Titel ein, damit wir wissen, worum es geht.",
+    sendFailed: "Dein Feedback wurde nicht gesendet. Prüfe deine Verbindung und versuche es erneut.",
+    thanksTitle: "Danke für dein Feedback!",
+    thanksBody: "Das Twist-Team liest jede Nachricht. So entscheiden wir, was wir als Nächstes verbessern.",
+    sendMore: "Weiteres Feedback senden",
+    done: "Fertig",
+  },
+} satisfies Record<Locale, Record<string, string>>;
+
+export type Strings = (typeof STRINGS)["en"];
