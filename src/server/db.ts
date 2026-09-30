@@ -1,5 +1,6 @@
 import "server-only";
 import { mkdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -8,12 +9,13 @@ import { HELP_COLLECTIONS, UPDATES, type MessageMeta } from "@/lib/messenger/con
 import { aiEnabled } from "./ai-config";
 
 // All storage goes through this file. It runs the same SQL on two databases:
-// - Postgres when a connection string is available: Netlify Database in
-//   production (NETLIFY_DB_URL, set by Netlify) or any other DATABASE_URL.
-//   The schema is in netlify/database/migrations/, which Netlify applies on
-//   deploy; elsewhere, run those files yourself.
+// - Postgres when DATABASE_URL is set. Create the tables first with the files
+//   in db/migrations/.
 // - SQLite in a local file otherwise (./data/feedback.db, or FEEDBACK_DB_PATH),
-//   created on first use. Good for development and a single server.
+//   created on first use. Good for development and a single server with a disk.
+//   On serverless hosting (Netlify) without DATABASE_URL, the file goes in the
+//   temporary folder: fine for a demo, but it resets whenever the host restarts
+//   the function, so set DATABASE_URL to keep data.
 
 type Value = string | number | null;
 
@@ -35,24 +37,15 @@ function db(): Promise<Driver> {
 }
 
 async function connect(): Promise<Driver> {
-  const url = process.env.DATABASE_URL || (await netlifyConnectionString());
+  const url = process.env.DATABASE_URL;
   const driver = url ? await postgres(url) : await sqlite();
   await seedContent(driver);
   return driver;
 }
 
-async function netlifyConnectionString(): Promise<string | null> {
-  const { getConnectionString } = await import("@netlify/database");
-  try {
-    return getConnectionString();
-  } catch {
-    return null; // not on Netlify, or Netlify Database isn't set up
-  }
-}
-
 async function postgres(connectionString: string): Promise<Driver> {
-  const { getDatabase } = await import("@netlify/database");
-  const { pool } = getDatabase({ connectionString });
+  const { default: pg } = await import("pg");
+  const pool = new pg.Pool({ connectionString, max: 5 });
   // A dropped idle connection must not crash the function.
   pool.on("error", (err: Error) => console.error("[db] idle connection error", err));
   // Postgres numbers its placeholders; this file writes `?` for both databases.
@@ -75,7 +68,14 @@ async function postgres(connectionString: string): Promise<Driver> {
 
 async function sqlite(): Promise<Driver> {
   const { DatabaseSync } = await import("node:sqlite");
-  const file = process.env.FEEDBACK_DB_PATH || path.join(process.cwd(), "data", "feedback.db");
+  // Serverless functions can only write to the temporary folder.
+  const serverless = !!(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+  const file =
+    process.env.FEEDBACK_DB_PATH ||
+    (serverless ? path.join(os.tmpdir(), "twist-feedback.db") : path.join(process.cwd(), "data", "feedback.db"));
+  if (serverless && !process.env.FEEDBACK_DB_PATH) {
+    console.warn("[db] No DATABASE_URL: using temporary demo storage, which resets when the function restarts.");
+  }
   mkdirSync(path.dirname(file), { recursive: true });
   const conn = new DatabaseSync(file);
   conn.exec(`

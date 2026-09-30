@@ -1,7 +1,6 @@
 # Netlify runs the Next.js app with its Next.js adapter (detected
-# automatically). Storage is Netlify Database (Postgres): installing
-# @netlify/database provisions it, and netlify/database/migrations/ is applied
-# on each deploy before it goes live.
+# automatically). Without DATABASE_URL, data is kept in temporary storage that
+# resets when the function restarts; see "Deploy on Netlify" in the README.
 [build]
   command = "npm run build"
   publish = ".next"

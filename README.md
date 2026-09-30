@@ -96,9 +96,18 @@ Create the token in Figma under Settings → Security → Personal access tokens
 
 ## Deploy on Netlify
 
-The repo is set up for Netlify (`netlify.toml`). Netlify runs the Next.js app on its own adapter, and storage moves to **Netlify Database** (Postgres): it's provisioned automatically because `@netlify/database` is installed, and the schema in `netlify/database/migrations/` is applied on each deploy before it goes live. Deploy previews get their own copy of the database, so testing there doesn't touch production data.
+The repo is set up for Netlify (`netlify.toml`); Netlify runs the Next.js app on its own adapter. Deploy from this folder with:
 
-After the first deploy, set these under *Project configuration → Environment variables* (then redeploy):
+```bash
+netlify deploy --build --prod
+```
+
+**Storage on Netlify.** Without a database, the app keeps its data in a temporary SQLite file on the function. That's enough to try the messenger and the admin, but everything (conversations, feedback, help and update edits) **resets whenever Netlify restarts the function**, and busy traffic can land on copies that don't share data. Before real testers use it, connect a Postgres database:
+
+1. Create one (for example a free project on neon.tech) and run `db/migrations/001_initial-schema.sql` on it once.
+2. Set `DATABASE_URL` to its connection string in Netlify, then redeploy.
+
+Also set these under *Project configuration → Environment variables* (then redeploy):
 
 - `ADMIN_PASSWORD`: required for `/admin`. Until it's set, the admin is locked.
 - `ANTHROPIC_API_KEY`: turns on the AI assistant.
@@ -106,8 +115,6 @@ After the first deploy, set these under *Project configuration → Environment v
 - `FEEDBACK_ALLOWED_ORIGINS`: the Twist sites that embed the messenger.
 
 The demo page on a deployed site treats every visitor as anonymous (locally it signs you in as a demo parent), so testers don't see each other's conversations.
-
-Any other Postgres works too: set `DATABASE_URL` and apply the migration files yourself.
 
 ## AI assistant
 
@@ -135,7 +142,7 @@ A reply from the team takes the conversation over from the assistant. *Let the A
 | `ADMIN_SESSION_SECRET` | Optional. Signs admin sessions; defaults to the password. |
 | `FEEDBACK_IDENTITY_SECRET` | Shared with the Twist server to verify parents (step 4). |
 | `FEEDBACK_ALLOWED_ORIGINS` | Other sites allowed to post, comma-separated. |
-| `DATABASE_URL` | Optional. Use this Postgres instead of SQLite. On Netlify, Netlify Database is used automatically. |
+| `DATABASE_URL` | Postgres connection string. Needed on Netlify to keep data; without it, data there is temporary. |
 | `FEEDBACK_DB_PATH` | SQLite file location, when not on Postgres. Defaults to `./data/feedback.db`. |
 | `ANTHROPIC_API_KEY` | Turns on the AI assistant. |
 | `FEEDBACK_AI_MODEL` | Optional. Claude model for the assistant; defaults to `claude-opus-5-5`. |
@@ -143,7 +150,7 @@ A reply from the team takes the conversation over from the assistant. *Let the A
 
 ## Before going to production
 
-- **Database.** All storage is in `src/server/db.ts`, which runs the same SQL on SQLite (local, or a single server with a disk) and Postgres (Netlify Database, or `DATABASE_URL`). When you change the schema, add a migration under `netlify/database/migrations/` and the matching change to the SQLite setup in `db.ts`.
+- **Database.** All storage is in `src/server/db.ts`, which runs the same SQL on SQLite (local, or a single server with a disk) and Postgres (`DATABASE_URL`). When you change the schema, add a numbered file to `db/migrations/` and the matching change to the SQLite setup in `db.ts`.
 - **Screenshots** are stored inside the database as images (up to about 2 MB each). Move them to object storage (for example S3) if volume grows.
 - **Rate limiting** is in memory, per server instance. On Netlify each function instance counts separately, so it only slows down abuse; put a shared limiter in front if that matters.
 - **Replies** reach the messenger by polling: every 8 seconds while a conversation is open (faster while the assistant is writing), and every 30 seconds otherwise, for the launcher badge. The assistant's own replies stream live. Polling is fine at tester scale; switch to server-sent events or websockets if traffic grows.

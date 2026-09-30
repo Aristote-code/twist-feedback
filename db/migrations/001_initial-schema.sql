@@ -1,6 +1,6 @@
--- Schema for Netlify Database (Postgres). Netlify applies migrations in this
--- folder on every deploy, before it goes live. The same tables for local
--- SQLite are created in src/server/db.ts; keep the two in step.
+-- Postgres schema, for when DATABASE_URL is set. Run the files in this folder
+-- in order, once each, for example: psql "$DATABASE_URL" -f 001_initial-schema.sql
+-- The same tables for SQLite are created in src/server/db.ts; keep the two in step.
 -- `seq` keeps insertion order, to break ties between rows with the same
 -- timestamp or position (SQLite uses its built-in rowid for this).
 
