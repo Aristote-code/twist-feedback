@@ -1,8 +1,11 @@
 import type { NextRequest } from "next/server";
 import { MESSAGE_MAX } from "@/lib/messenger/content";
 import { addMessage, getConversation } from "@/server/db";
+import { adminOnly } from "@/server/admin-auth";
 
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/admin/conversations/[id]/messages">) {
+  const denied = await adminOnly();
+  if (denied) return denied;
   const { id } = await ctx.params;
   if (!(await getConversation(id))) return Response.json({ error: "Not found" }, { status: 404 });
   const body = (await request.json().catch(() => ({}))) as { message?: string; authorName?: string };

@@ -1,12 +1,17 @@
 import { badRequest, localized, optionalId } from "@/server/admin-input";
 import { listHelp, saveArticle, saveCollection } from "@/server/db";
+import { adminOnly } from "@/server/admin-auth";
 
 export async function GET() {
+  const denied = await adminOnly();
+  if (denied) return denied;
   return Response.json({ collections: await listHelp({ publishedOnly: false }) });
 }
 
 /** Create or update a collection ({kind: "collection"}) or an article ({kind: "article"}). */
 export async function POST(request: Request) {
+  const denied = await adminOnly();
+  if (denied) return denied;
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return badRequest("The request body must be JSON.");
 

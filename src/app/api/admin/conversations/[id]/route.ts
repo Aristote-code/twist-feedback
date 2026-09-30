@@ -2,8 +2,11 @@ import { after, type NextRequest } from "next/server";
 import { aiEnabled } from "@/server/ai-config";
 import { replyToConversation } from "@/server/assistant";
 import { getConversation, listMessages, setConversationMode, setConversationStatus } from "@/server/db";
+import { adminOnly } from "@/server/admin-auth";
 
 export async function GET(_request: NextRequest, ctx: RouteContext<"/api/admin/conversations/[id]">) {
+  const denied = await adminOnly();
+  if (denied) return denied;
   const { id } = await ctx.params;
   const conversation = await getConversation(id);
   if (!conversation) return Response.json({ error: "Not found" }, { status: 404 });
@@ -12,6 +15,8 @@ export async function GET(_request: NextRequest, ctx: RouteContext<"/api/admin/c
 
 /** Change status (open/closed) and/or who answers (mode: ai/human). */
 export async function PATCH(request: NextRequest, ctx: RouteContext<"/api/admin/conversations/[id]">) {
+  const denied = await adminOnly();
+  if (denied) return denied;
   const { id } = await ctx.params;
   if (!(await getConversation(id))) return Response.json({ error: "Not found" }, { status: 404 });
   const { status, mode } = (await request.json().catch(() => ({}))) as { status?: string; mode?: string };

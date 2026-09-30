@@ -1,14 +1,19 @@
 import type { NextRequest } from "next/server";
 import { STATUSES, type Status } from "@/lib/feedback/config";
 import { deleteFeedback, getFeedback, updateFeedback } from "@/server/db";
+import { adminOnly } from "@/server/admin-auth";
 
 export async function GET(_request: NextRequest, ctx: RouteContext<"/api/admin/feedback/[id]">) {
+  const denied = await adminOnly();
+  if (denied) return denied;
   const { id } = await ctx.params;
   const item = await getFeedback(id, { withScreenshot: true });
   return item ? Response.json({ item }) : Response.json({ error: "Not found" }, { status: 404 });
 }
 
 export async function PATCH(request: NextRequest, ctx: RouteContext<"/api/admin/feedback/[id]">) {
+  const denied = await adminOnly();
+  if (denied) return denied;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => ({}))) as { status?: string; internalNote?: string };
   if (body.status !== undefined && !STATUSES.includes(body.status as Status)) {
@@ -22,6 +27,8 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<"/api/admin/
 }
 
 export async function DELETE(_request: NextRequest, ctx: RouteContext<"/api/admin/feedback/[id]">) {
+  const denied = await adminOnly();
+  if (denied) return denied;
   const { id } = await ctx.params;
   return (await deleteFeedback(id)) ? Response.json({ ok: true }) : Response.json({ error: "Not found" }, { status: 404 });
 }

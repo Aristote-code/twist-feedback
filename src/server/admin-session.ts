@@ -1,4 +1,4 @@
-// Used by src/proxy.ts and the login route, so it sticks to Web Crypto.
+// Session tokens for the admin: HMAC-signed expiry times, using Web Crypto.
 
 export const ADMIN_COOKIE = "twist_feedback_admin";
 const SESSION_DAYS = 7;
