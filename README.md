@@ -96,11 +96,9 @@ Create the token in Figma under Settings → Security → Personal access tokens
 
 ## Deploy on Netlify
 
-The repo is set up for Netlify (`netlify.toml`); Netlify runs the Next.js app on its own adapter. Deploy from this folder with:
+The repo is set up for Netlify (`netlify.toml`); Netlify runs the Next.js app on its own adapter. The live demo is **https://twist-feedback.netlify.app** (project `twist-feedback`).
 
-```bash
-netlify deploy --build --prod
-```
+The simplest way to keep it up to date is to link the GitHub repo in Netlify (*Project configuration → Build & deploy → Link repository*), so every push to `main` deploys. To deploy by hand, run `netlify deploy --build --prod` from a fresh clone of the repo, not from a working folder with `.env.local` or `data/` in it.
 
 **Storage on Netlify.** Without a database, the app keeps its data in a temporary SQLite file on the function. That's enough to try the messenger and the admin, but everything (conversations, feedback, help and update edits) **resets whenever Netlify restarts the function**, and busy traffic can land on copies that don't share data. Before real testers use it, connect a Postgres database:
 
