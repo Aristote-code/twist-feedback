@@ -2,7 +2,7 @@ import { badRequest, localized, optionalId } from "@/server/admin-input";
 import { listUpdates, saveUpdate } from "@/server/db";
 
 export async function GET() {
-  return Response.json({ updates: listUpdates({ publishedOnly: false }) });
+  return Response.json({ updates: await listUpdates({ publishedOnly: false }) });
 }
 
 /** Create or update an update post. */
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   const date = typeof body.publishedAt === "string" ? new Date(body.publishedAt) : new Date();
   if (Number.isNaN(date.getTime())) return badRequest("The publish date isn't a valid date.");
   const imageUrl = typeof body.imageUrl === "string" && /^https?:\/\/\S+$/.test(body.imageUrl.trim()) ? body.imageUrl.trim() : null;
-  const id = saveUpdate({
+  const id = await saveUpdate({
     id: optionalId(body.id),
     publishedAt: date.toISOString(),
     title,

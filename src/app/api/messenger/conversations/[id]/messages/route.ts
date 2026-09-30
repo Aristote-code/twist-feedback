@@ -16,12 +16,12 @@ export async function POST(request: Request, ctx: RouteContext<"/api/messenger/c
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const owner = resolveOwner(request, { name: body?.name, email: body?.email });
-  const conversation = owner ? getOwnedConversation(id, owner.ownerKey) : null;
+  const conversation = owner ? await getOwnedConversation(id, owner.ownerKey) : null;
   if (!owner || !conversation) return json({ error: "Conversation not found." }, 404);
 
   const text = typeof body?.message === "string" ? body.message.trim().slice(0, MESSAGE_MAX) : "";
   if (!text) return json({ error: "Write a message first." }, 400);
 
-  const message = addMessage(id, "visitor", owner.userName, text);
+  const message = await addMessage(id, "visitor", owner.userName, text);
   return streamSend(headers, [{ type: "message", message: toChatMessage(message) }], id);
 }

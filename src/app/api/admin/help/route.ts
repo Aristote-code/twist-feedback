@@ -2,7 +2,7 @@ import { badRequest, localized, optionalId } from "@/server/admin-input";
 import { listHelp, saveArticle, saveCollection } from "@/server/db";
 
 export async function GET() {
-  return Response.json({ collections: listHelp({ publishedOnly: false }) });
+  return Response.json({ collections: await listHelp({ publishedOnly: false }) });
 }
 
 /** Create or update a collection ({kind: "collection"}) or an article ({kind: "article"}). */
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   if (body.kind === "collection") {
     const title = localized(body.title, 120);
     if (!title.en) return badRequest("Give the collection an English title.");
-    const id = saveCollection({
+    const id = await saveCollection({
       id: optionalId(body.id),
       position: typeof body.position === "number" ? body.position : undefined,
       title,
@@ -26,10 +26,10 @@ export async function POST(request: Request) {
     const title = localized(body.title, 200);
     const collectionId = optionalId(body.collectionId);
     if (!title.en) return badRequest("Give the article an English title.");
-    if (!collectionId || !listHelp({ publishedOnly: false }).some((c) => c.id === collectionId)) {
+    if (!collectionId || !(await listHelp({ publishedOnly: false })).some((c) => c.id === collectionId)) {
       return badRequest("Pick a collection for the article.");
     }
-    const id = saveArticle({
+    const id = await saveArticle({
       id: optionalId(body.id),
       collectionId,
       position: typeof body.position === "number" ? body.position : undefined,

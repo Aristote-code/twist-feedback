@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   const user = body.user && typeof body.user.id === "string" ? body.user : null;
   const email = str(user?.email || body.email, 200);
 
-  const record = createFeedback({
+  const record = await createFeedback({
     category: category.id,
     postType,
     title,

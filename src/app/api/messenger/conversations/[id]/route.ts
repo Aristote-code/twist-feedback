@@ -12,7 +12,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/messenger/co
   if (blocked) return json({ error: "This site isn't allowed to use the messenger." }, 403);
   const { id } = await ctx.params;
   const owner = resolveOwner(request);
-  const conversation = owner ? getOwnedConversation(id, owner.ownerKey) : null;
+  const conversation = owner ? await getOwnedConversation(id, owner.ownerKey) : null;
   if (!conversation) return json({ error: "Conversation not found." }, 404);
-  return json({ conversation: toSummary(conversation), messages: listMessages(id).map(toChatMessage) });
+  return json({ conversation: toSummary(conversation), messages: (await listMessages(id)).map(toChatMessage) });
 }

@@ -43,3 +43,6 @@ next-env.d.ts
 # feedback service
 !.env.example
 /data
+
+# netlify
+.netlify

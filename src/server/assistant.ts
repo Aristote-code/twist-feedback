@@ -134,13 +134,13 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice
 
 // Eager input streaming means the API no longer validates tool inputs, so
 // every input is checked here before anything runs.
-function runTool(name: string, input: unknown, turn: Turn): ToolOutcome {
+async function runTool(name: string, input: unknown, turn: Turn): Promise<ToolOutcome> {
   const args = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   switch (name) {
     case "search_help_center": {
       const query = str(args.query, 200);
       if (!query) return { content: "query is required", isError: true };
-      const hits = searchArticles(query, 5);
+      const hits = await searchArticles(query, 5);
       if (!hits.length) return { content: "No articles matched." };
       return {
         content: JSON.stringify(
@@ -153,7 +153,7 @@ function runTool(name: string, input: unknown, turn: Turn): ToolOutcome {
       const de = turn.conversation.locale === "de";
       const shown: string[] = [];
       for (const id of ids) {
-        const a = getArticle(id);
+        const a = await getArticle(id);
         if (a?.published) {
           turn.sources.set(a.id, (de && a.title.de) || a.title.en);
           shown.push(a.id);
@@ -164,7 +164,7 @@ function runTool(name: string, input: unknown, turn: Turn): ToolOutcome {
     case "tag_conversation": {
       const topic = str(args.topic, 40);
       if (!TOPICS.includes(topic as (typeof TOPICS)[number])) return { content: `topic must be one of ${TOPICS.join(", ")}`, isError: true };
-      setConversationTopic(turn.conversation.id, topic);
+      await setConversationTopic(turn.conversation.id, topic);
       return { content: "Tagged." };
     }
     case "log_feedback": {
@@ -174,7 +174,7 @@ function runTool(name: string, input: unknown, turn: Turn): ToolOutcome {
       const description = str(args.description, LIMITS.descriptionMax);
       if (!category || title.length < LIMITS.titleMin) return { content: "category and a title are required", isError: true };
       const c = turn.conversation;
-      const record = createFeedback({
+      const record = await createFeedback({
         category: category.id,
         postType: null,
         title,
@@ -201,8 +201,8 @@ function runTool(name: string, input: unknown, turn: Turn): ToolOutcome {
   }
 }
 
-function history(conversationId: string): Anthropic.Beta.BetaMessageParam[] {
-  const messages = listMessages(conversationId).slice(-HISTORY_LIMIT);
+async function history(conversationId: string): Promise<Anthropic.Beta.BetaMessageParam[]> {
+  const messages = (await listMessages(conversationId)).slice(-HISTORY_LIMIT);
   const out: Anthropic.Beta.BetaMessageParam[] = [];
   for (const m of messages) {
     if (m.author === "visitor") out.push({ role: "user", content: m.body });
@@ -241,7 +241,7 @@ export async function replyToConversation(
 ): Promise<MessageRecord | null> {
   // Only answer a parent's message, never after the team's or its own.
   if (conversation.mode !== "ai" || conversation.lastAuthor !== "visitor" || !aiEnabled()) return null;
-  if (!claimAiTurn(conversation.id)) return null;
+  if (!(await claimAiTurn(conversation.id))) return null;
 
   const t = MESSENGER_STRINGS[conversation.locale === "de" ? "de" : "en"];
   const turn: Turn = { conversation, sources: new Map() };
@@ -254,10 +254,10 @@ export async function replyToConversation(
   try {
     listener.onStart?.();
 
-    if (countMessages(conversation.id, "ai") >= MAX_AI_REPLIES) {
+    if ((await countMessages(conversation.id, "ai")) >= MAX_AI_REPLIES) {
       turn.handoffReason = "Long conversation: the assistant stepped back.";
     } else {
-      const messages = history(conversation.id);
+      const messages = await history(conversation.id);
       let badJson = 0;
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const stream = anthropic().beta.messages.stream({
@@ -304,10 +304,12 @@ export async function replyToConversation(
         if (message.stop_reason !== "tool_use" || !toolUses.length) break;
 
         messages.push({ role: "assistant", content });
-        const results: Anthropic.Beta.BetaToolResultBlockParam[] = toolUses.map((use) => {
-          const outcome = runTool(use.name, use.input, turn);
-          return { type: "tool_result", tool_use_id: use.id, content: outcome.content, ...(outcome.isError ? { is_error: true } : {}) };
-        });
+        // One at a time, in order: log_feedback relies on seeing earlier calls.
+        const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
+        for (const use of toolUses) {
+          const outcome = await runTool(use.name, use.input, turn);
+          results.push({ type: "tool_result", tool_use_id: use.id, content: outcome.content, ...(outcome.isError ? { is_error: true } : {}) });
+        }
         messages.push({ role: "user", content: results });
       }
     }
@@ -316,7 +318,7 @@ export async function replyToConversation(
     turn.handoffReason ??= "The assistant hit an error, so a person should reply.";
     emit(text.trim() ? `\n\n${t.handedOff}` : t.handedOff);
   } finally {
-    releaseAiTurn(conversation.id);
+    await releaseAiTurn(conversation.id).catch((err) => console.error("[assistant] release failed", err));
   }
 
   let body = text.trim();
@@ -330,7 +332,7 @@ export async function replyToConversation(
   if (turn.feedback) meta.feedback = turn.feedback;
   if (turn.handoffReason) meta.handoff = true;
 
-  const saved = addMessage(conversation.id, "ai", t.assistantName, body.slice(0, 4000), meta);
-  if (turn.handoffReason) setConversationMode(conversation.id, "human", turn.handoffReason);
+  const saved = await addMessage(conversation.id, "ai", t.assistantName, body.slice(0, 4000), meta);
+  if (turn.handoffReason) await setConversationMode(conversation.id, "human", turn.handoffReason);
   return saved;
 }

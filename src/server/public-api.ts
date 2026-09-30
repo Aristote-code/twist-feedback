@@ -58,7 +58,7 @@ export function streamSend(headers: Record<string, string>, first: SendEvent[], 
 
   (async () => {
     first.forEach(send);
-    const conversation = getConversation(conversationId);
+    const conversation = await getConversation(conversationId);
     if (!conversation) return;
     const modeBefore = conversation.mode;
     const reply = await replyToConversation(conversation, {
@@ -66,7 +66,7 @@ export function streamSend(headers: Record<string, string>, first: SendEvent[], 
       onDelta: (text) => send({ type: "ai_delta", text }),
     });
     if (reply) send({ type: "ai_message", message: toChatMessage(reply) });
-    const after = getConversation(conversationId);
+    const after = await getConversation(conversationId);
     if (after && after.mode !== modeBefore) send({ type: "mode", mode: after.mode });
   })()
     .catch((err) => {

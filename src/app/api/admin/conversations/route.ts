@@ -5,7 +5,7 @@ import { listAllConversations } from "@/server/db";
 export async function GET(request: NextRequest) {
   const status = request.nextUrl.searchParams.get("status");
   return Response.json({
-    conversations: listAllConversations({ status: status === "open" || status === "closed" ? status : undefined }),
+    conversations: await listAllConversations({ status: status === "open" || status === "closed" ? status : undefined }),
     aiEnabled: aiEnabled(),
   });
 }

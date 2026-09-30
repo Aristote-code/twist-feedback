@@ -2,41 +2,79 @@ import "server-only";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import type { FeedbackRecord, Status } from "@/lib/feedback/config";
 import { HELP_COLLECTIONS, UPDATES, type MessageMeta } from "@/lib/messenger/content";
 import { aiEnabled } from "./ai-config";
 
-// All storage goes through this file. To move to Postgres (or Twist's main
-// database), reimplement these functions with the same signatures.
+// All storage goes through this file. It runs the same SQL on two databases:
+// - Postgres when a connection string is available: Netlify Database in
+//   production (NETLIFY_DB_URL, set by Netlify) or any other DATABASE_URL.
+//   The schema is in netlify/database/migrations/, which Netlify applies on
+//   deploy; elsewhere, run those files yourself.
+// - SQLite in a local file otherwise (./data/feedback.db, or FEEDBACK_DB_PATH),
+//   created on first use. Good for development and a single server.
 
-type Row = {
-  id: string;
-  created_at: string;
-  updated_at: string;
-  category: string;
-  post_type: string | null;
-  title: string;
-  description: string;
-  status: Status;
-  source: string;
-  locale: string | null;
-  page_url: string | null;
-  user_id: string | null;
-  user_name: string | null;
-  user_email: string | null;
-  user_verified: number;
-  metadata: string;
-  has_screenshot: number;
-  screenshot?: string | null;
-  internal_note: string;
+type Value = string | number | null;
+
+type Driver = {
+  dialect: "sqlite" | "postgres";
+  all<T>(sql: string, params?: Value[]): Promise<T[]>;
+  /** Runs a statement; returns the number of rows it changed. */
+  run(sql: string, params?: Value[]): Promise<number>;
 };
 
-const globalForDb = globalThis as unknown as { twistFeedbackDb?: DatabaseSync };
+const globalForDb = globalThis as unknown as { twistFeedbackStore?: Promise<Driver> };
 
-function db(): DatabaseSync {
-  if (globalForDb.twistFeedbackDb) return globalForDb.twistFeedbackDb;
+function db(): Promise<Driver> {
+  globalForDb.twistFeedbackStore ??= connect().catch((err) => {
+    globalForDb.twistFeedbackStore = undefined; // try again on the next request
+    throw err;
+  });
+  return globalForDb.twistFeedbackStore;
+}
 
+async function connect(): Promise<Driver> {
+  const url = process.env.DATABASE_URL || (await netlifyConnectionString());
+  const driver = url ? await postgres(url) : await sqlite();
+  await seedContent(driver);
+  return driver;
+}
+
+async function netlifyConnectionString(): Promise<string | null> {
+  const { getConnectionString } = await import("@netlify/database");
+  try {
+    return getConnectionString();
+  } catch {
+    return null; // not on Netlify, or Netlify Database isn't set up
+  }
+}
+
+async function postgres(connectionString: string): Promise<Driver> {
+  const { getDatabase } = await import("@netlify/database");
+  const { pool } = getDatabase({ connectionString });
+  // A dropped idle connection must not crash the function.
+  pool.on("error", (err: Error) => console.error("[db] idle connection error", err));
+  // Postgres numbers its placeholders; this file writes `?` for both databases.
+  const numbered = (sql: string) => {
+    let n = 0;
+    return sql.replace(/\?/g, () => `$${++n}`);
+  };
+  return {
+    dialect: "postgres",
+    async all<T>(sql: string, params: Value[] = []) {
+      const res = await pool.query(numbered(sql), params);
+      return res.rows as T[];
+    },
+    async run(sql: string, params: Value[] = []) {
+      const res = await pool.query(numbered(sql), params);
+      return res.rowCount ?? 0;
+    },
+  };
+}
+
+async function sqlite(): Promise<Driver> {
+  const { DatabaseSync } = await import("node:sqlite");
   const file = process.env.FEEDBACK_DB_PATH || path.join(process.cwd(), "data", "feedback.db");
   mkdirSync(path.dirname(file), { recursive: true });
   const conn = new DatabaseSync(file);
@@ -119,6 +157,10 @@ function db(): DatabaseSync {
       image_url    TEXT,
       published    INTEGER NOT NULL DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   // Columns added after the first release. SQLite has no ADD COLUMN IF NOT EXISTS.
@@ -129,9 +171,15 @@ function db(): DatabaseSync {
   addColumn(conn, "conversations", "ai_busy_since", "ai_busy_since TEXT");
   addColumn(conn, "messages", "meta", "meta TEXT NOT NULL DEFAULT '{}'");
 
-  seedContent(conn);
-  globalForDb.twistFeedbackDb = conn;
-  return conn;
+  return {
+    dialect: "sqlite",
+    async all<T>(sql: string, params: Value[] = []) {
+      return conn.prepare(sql).all(...params) as T[];
+    },
+    async run(sql: string, params: Value[] = []) {
+      return Number(conn.prepare(sql).run(...params).changes);
+    },
+  };
 }
 
 function addColumn(conn: DatabaseSync, table: string, column: string, ddl: string) {
@@ -139,38 +187,76 @@ function addColumn(conn: DatabaseSync, table: string, column: string, ddl: strin
   if (!cols.some((c) => c.name === column)) conn.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
-/** First run only: load the starter help centre and updates from lib/messenger/content.ts. */
-function seedContent(conn: DatabaseSync) {
-  const now = new Date().toISOString();
-  const hasHelp = conn.prepare("SELECT 1 FROM help_collections LIMIT 1").get();
-  if (!hasHelp) {
-    HELP_COLLECTIONS.forEach((c, ci) => {
-      conn
-        .prepare(
-          "INSERT INTO help_collections (id, position, title_en, title_de, description_en, description_de) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .run(c.id, ci, c.title.en, c.title.de, c.description.en, c.description.de);
-      c.articles.forEach((a, ai) => {
-        conn
-          .prepare(
-            `INSERT INTO help_articles (id, collection_id, position, title_en, title_de, body_en, body_de, published, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-          )
-          .run(a.id, c.id, ai, a.title.en, a.title.de, a.body.en, a.body.de, now);
-      });
-    });
-  }
-  const hasUpdates = conn.prepare("SELECT 1 FROM updates LIMIT 1").get();
-  if (!hasUpdates) {
+/** Insertion order, to break ties when rows share a timestamp or position. */
+function seq(d: Driver, alias?: string): string {
+  const col = d.dialect === "sqlite" ? "rowid" : "seq";
+  return alias ? `${alias}.${col}` : col;
+}
+
+async function first<T>(sql: string, params: Value[] = []): Promise<T | undefined> {
+  return (await (await db()).all<T>(sql, params))[0];
+}
+
+/**
+ * Loads the starter help centre and updates from lib/messenger/content.ts,
+ * once per database. Deleting them later doesn't bring them back.
+ */
+async function seedContent(d: Driver) {
+  const done = await d.all("SELECT 1 FROM settings WHERE key = 'seeded'");
+  if (done.length) return;
+  // Databases from before this flag already have their content.
+  const existing = await d.all("SELECT 1 FROM help_collections LIMIT 1");
+  if (!existing.length) {
+    const now = new Date().toISOString();
+    for (const [ci, c] of HELP_COLLECTIONS.entries()) {
+      await d.run(
+        `INSERT INTO help_collections (id, position, title_en, title_de, description_en, description_de)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+        [c.id, ci, c.title.en, c.title.de, c.description.en, c.description.de],
+      );
+      for (const [ai, a] of c.articles.entries()) {
+        await d.run(
+          `INSERT INTO help_articles (id, collection_id, position, title_en, title_de, body_en, body_de, published, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT (id) DO NOTHING`,
+          [a.id, c.id, ai, a.title.en, a.title.de, a.body.en, a.body.de, now],
+        );
+      }
+    }
     for (const u of UPDATES) {
-      conn
-        .prepare(
-          "INSERT INTO updates (id, published_at, title_en, title_de, body_en, body_de, image_url, published) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-        )
-        .run(u.id, new Date(u.date).toISOString(), u.title.en, u.title.de, u.body.en, u.body.de, u.imageUrl ?? null);
+      await d.run(
+        `INSERT INTO updates (id, published_at, title_en, title_de, body_en, body_de, image_url, published)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT (id) DO NOTHING`,
+        [u.id, new Date(u.date).toISOString(), u.title.en, u.title.de, u.body.en, u.body.de, u.imageUrl ?? null],
+      );
     }
   }
+  await d.run("INSERT INTO settings (key, value) VALUES ('seeded', ?) ON CONFLICT (key) DO NOTHING", [new Date().toISOString()]);
 }
+
+// ---------------------------------------------------------------------------
+// Feedback
+
+type Row = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  category: string;
+  post_type: string | null;
+  title: string;
+  description: string;
+  status: Status;
+  source: string;
+  locale: string | null;
+  page_url: string | null;
+  user_id: string | null;
+  user_name: string | null;
+  user_email: string | null;
+  user_verified: number;
+  metadata: string;
+  has_screenshot: number;
+  screenshot?: string | null;
+  internal_note: string;
+};
 
 function toRecord(row: Row): FeedbackRecord {
   return {
@@ -188,9 +274,9 @@ function toRecord(row: Row): FeedbackRecord {
     userId: row.user_id,
     userName: row.user_name,
     userEmail: row.user_email,
-    userVerified: row.user_verified === 1,
+    userVerified: Number(row.user_verified) === 1,
     metadata: JSON.parse(row.metadata || "{}"),
-    hasScreenshot: row.has_screenshot === 1,
+    hasScreenshot: Number(row.has_screenshot) === 1,
     ...(row.screenshot !== undefined ? { screenshot: row.screenshot } : {}),
     internalNote: row.internal_note,
   };
@@ -198,7 +284,7 @@ function toRecord(row: Row): FeedbackRecord {
 
 const LIST_COLUMNS = `id, created_at, updated_at, category, post_type, title, description,
   status, source, locale, page_url, user_id, user_name, user_email, user_verified,
-  metadata, (screenshot IS NOT NULL) AS has_screenshot, internal_note`;
+  metadata, CASE WHEN screenshot IS NULL THEN 0 ELSE 1 END AS has_screenshot, internal_note`;
 
 export type NewFeedback = {
   category: string;
@@ -216,24 +302,23 @@ export type NewFeedback = {
   screenshot: string | null;
 };
 
-export function createFeedback(input: NewFeedback): FeedbackRecord {
+export async function createFeedback(input: NewFeedback): Promise<FeedbackRecord> {
   const id = randomUUID();
   const now = new Date().toISOString();
-  db()
-    .prepare(
-      `INSERT INTO feedback (id, created_at, updated_at, category, post_type, title, description,
-        source, locale, page_url, user_id, user_name, user_email, user_verified, metadata, screenshot)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+  await (await db()).run(
+    `INSERT INTO feedback (id, created_at, updated_at, category, post_type, title, description,
+      source, locale, page_url, user_id, user_name, user_email, user_verified, metadata, screenshot)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       id, now, now, input.category, input.postType, input.title, input.description,
       input.source, input.locale, input.pageUrl, input.userId, input.userName, input.userEmail,
       input.userVerified ? 1 : 0, JSON.stringify(input.metadata), input.screenshot,
-    );
-  return getFeedback(id, { withScreenshot: false })!;
+    ],
+  );
+  return (await getFeedback(id, { withScreenshot: false }))!;
 }
 
-export function listFeedback(filter: { status?: Status; category?: string; q?: string } = {}): FeedbackRecord[] {
+export async function listFeedback(filter: { status?: Status; category?: string; q?: string } = {}): Promise<FeedbackRecord[]> {
   const where: string[] = [];
   const params: string[] = [];
   if (filter.status) {
@@ -245,30 +330,32 @@ export function listFeedback(filter: { status?: Status; category?: string; q?: s
     params.push(filter.category);
   }
   if (filter.q) {
-    where.push("(title LIKE ? OR description LIKE ? OR user_name LIKE ? OR user_email LIKE ?)");
-    const like = `%${filter.q}%`;
+    // LOWER() on both sides: Postgres LIKE is case-sensitive, SQLite's isn't.
+    where.push(
+      "(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(COALESCE(user_name, '')) LIKE ? OR LOWER(COALESCE(user_email, '')) LIKE ?)",
+    );
+    const like = `%${filter.q.toLowerCase()}%`;
     params.push(like, like, like, like);
   }
   const sql = `SELECT ${LIST_COLUMNS} FROM feedback ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY created_at DESC LIMIT 1000`;
-  return (db().prepare(sql).all(...params) as Row[]).map(toRecord);
+  return (await (await db()).all<Row>(sql, params)).map(toRecord);
 }
 
-export function countByStatus(): Record<string, number> {
-  const rows = db().prepare("SELECT status, COUNT(*) AS n FROM feedback GROUP BY status").all() as {
-    status: string;
-    n: number;
-  }[];
-  return Object.fromEntries(rows.map((r) => [r.status, r.n]));
+export async function countByStatus(): Promise<Record<string, number>> {
+  const rows = await (await db()).all<{ status: string; n: number | string }>(
+    "SELECT status, COUNT(*) AS n FROM feedback GROUP BY status",
+  );
+  return Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
 }
 
-export function getFeedback(id: string, opts: { withScreenshot: boolean }): FeedbackRecord | null {
+export async function getFeedback(id: string, opts: { withScreenshot: boolean }): Promise<FeedbackRecord | null> {
   const cols = opts.withScreenshot ? `${LIST_COLUMNS}, screenshot` : LIST_COLUMNS;
-  const row = db().prepare(`SELECT ${cols} FROM feedback WHERE id = ?`).get(id) as Row | undefined;
+  const row = await first<Row>(`SELECT ${cols} FROM feedback WHERE id = ?`, [id]);
   return row ? toRecord(row) : null;
 }
 
-export function updateFeedback(id: string, patch: { status?: Status; internalNote?: string }): FeedbackRecord | null {
+export async function updateFeedback(id: string, patch: { status?: Status; internalNote?: string }): Promise<FeedbackRecord | null> {
   const sets: string[] = [];
   const params: string[] = [];
   if (patch.status) {
@@ -282,13 +369,13 @@ export function updateFeedback(id: string, patch: { status?: Status; internalNot
   if (sets.length) {
     sets.push("updated_at = ?");
     params.push(new Date().toISOString());
-    db().prepare(`UPDATE feedback SET ${sets.join(", ")} WHERE id = ?`).run(...params, id);
+    await (await db()).run(`UPDATE feedback SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
   }
   return getFeedback(id, { withScreenshot: false });
 }
 
-export function deleteFeedback(id: string): boolean {
-  return db().prepare("DELETE FROM feedback WHERE id = ?").run(id).changes > 0;
+export async function deleteFeedback(id: string): Promise<boolean> {
+  return (await (await db()).run("DELETE FROM feedback WHERE id = ?", [id])) > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -371,11 +458,15 @@ export type MessageRecord = {
   meta: MessageMeta;
 };
 
-const CONVERSATION_SELECT = `
-  SELECT c.*,
-    (SELECT body FROM messages m WHERE m.conversation_id = c.id ORDER BY created_at DESC, rowid DESC LIMIT 1) AS last_message,
-    (SELECT author FROM messages m WHERE m.conversation_id = c.id ORDER BY created_at DESC, rowid DESC LIMIT 1) AS last_author
-  FROM conversations c`;
+function conversationSelect(d: Driver): string {
+  const latest = `FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, ${seq(d, "m")} DESC LIMIT 1`;
+  return `
+    SELECT c.id, c.owner_key, c.created_at, c.last_message_at, c.status, c.mode, c.topic, c.handoff_reason,
+      c.ai_busy_since, c.source, c.locale, c.page_url, c.user_id, c.user_name, c.user_email, c.user_verified,
+      (SELECT m.body ${latest}) AS last_message,
+      (SELECT m.author ${latest}) AS last_author
+    FROM conversations c`;
+}
 
 // A reply that has been "in progress" this long has crashed; stop showing it.
 const AI_BUSY_STALE_MS = 2 * 60 * 1000;
@@ -399,7 +490,7 @@ function toConversation(row: ConversationRow): ConversationRecord {
     userId: row.user_id,
     userName: row.user_name,
     userEmail: row.user_email,
-    userVerified: row.user_verified === 1,
+    userVerified: Number(row.user_verified) === 1,
     lastMessage: row.last_message ?? "",
     lastAuthor,
     // The team owes a reply when the parent wrote last, or when the assistant
@@ -421,121 +512,130 @@ function toMessage(row: MessageRow): MessageRecord {
   return { id: row.id, createdAt: row.created_at, author: row.author, authorName: row.author_name, body: row.body, meta };
 }
 
-export function createConversation(
+export async function createConversation(
   owner: ConversationOwner,
   meta: { source: string; locale: string | null; pageUrl: string | null; mode: ConversationMode },
   firstMessage: string,
-): { conversation: ConversationRecord; message: MessageRecord } {
+): Promise<{ conversation: ConversationRecord; message: MessageRecord }> {
   const id = randomUUID();
   const now = new Date().toISOString();
-  db()
-    .prepare(
-      `INSERT INTO conversations (id, owner_key, created_at, last_message_at, mode, source, locale, page_url,
-        user_id, user_name, user_email, user_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+  await (await db()).run(
+    `INSERT INTO conversations (id, owner_key, created_at, last_message_at, mode, source, locale, page_url,
+      user_id, user_name, user_email, user_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       id, owner.ownerKey, now, now, meta.mode, meta.source, meta.locale, meta.pageUrl,
       owner.userId, owner.userName, owner.userEmail, owner.userVerified ? 1 : 0,
-    );
-  const message = addMessage(id, "visitor", owner.userName, firstMessage);
-  return { conversation: getConversation(id)!, message };
+    ],
+  );
+  const message = await addMessage(id, "visitor", owner.userName, firstMessage);
+  return { conversation: (await getConversation(id))!, message };
 }
 
-export function addMessage(
+export async function addMessage(
   conversationId: string,
   author: Author,
   authorName: string | null,
   body: string,
   meta: MessageMeta = {},
-): MessageRecord {
+): Promise<MessageRecord> {
   const id = randomUUID();
   const now = new Date().toISOString();
-  const conn = db();
-  conn
-    .prepare("INSERT INTO messages (id, conversation_id, created_at, author, author_name, body, meta) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(id, conversationId, now, author, authorName, body, JSON.stringify(meta));
+  const d = await db();
+  await d.run("INSERT INTO messages (id, conversation_id, created_at, author, author_name, body, meta) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+    id, conversationId, now, author, authorName, body, JSON.stringify(meta),
+  ]);
   // A new visitor message reopens a closed conversation. A team reply means
   // a person has taken over, so the assistant steps back.
   const extra = author === "visitor" ? ", status = 'open'" : author === "team" ? ", mode = 'human'" : "";
-  conn.prepare(`UPDATE conversations SET last_message_at = ?${extra} WHERE id = ?`).run(now, conversationId);
+  await d.run(`UPDATE conversations SET last_message_at = ?${extra} WHERE id = ?`, [now, conversationId]);
   return { id, createdAt: now, author, authorName, body, meta };
 }
 
-export function getConversation(id: string): ConversationRecord | null {
-  const row = db().prepare(`${CONVERSATION_SELECT} WHERE c.id = ?`).get(id) as ConversationRow | undefined;
+export async function getConversation(id: string): Promise<ConversationRecord | null> {
+  const d = await db();
+  const row = (await d.all<ConversationRow>(`${conversationSelect(d)} WHERE c.id = ?`, [id]))[0];
   return row ? toConversation(row) : null;
 }
 
 /** The conversation, only if it belongs to this owner. */
-export function getOwnedConversation(id: string, ownerKey: string): ConversationRecord | null {
-  const row = db().prepare(`${CONVERSATION_SELECT} WHERE c.id = ? AND c.owner_key = ?`).get(id, ownerKey) as
-    | ConversationRow
-    | undefined;
+export async function getOwnedConversation(id: string, ownerKey: string): Promise<ConversationRecord | null> {
+  const d = await db();
+  const row = (await d.all<ConversationRow>(`${conversationSelect(d)} WHERE c.id = ? AND c.owner_key = ?`, [id, ownerKey]))[0];
   return row ? toConversation(row) : null;
 }
 
-export function listConversationsForOwner(ownerKey: string): ConversationRecord[] {
-  return (
-    db().prepare(`${CONVERSATION_SELECT} WHERE c.owner_key = ? ORDER BY c.last_message_at DESC LIMIT 50`).all(ownerKey) as ConversationRow[]
-  ).map(toConversation);
+export async function listConversationsForOwner(ownerKey: string): Promise<ConversationRecord[]> {
+  const d = await db();
+  const rows = await d.all<ConversationRow>(
+    `${conversationSelect(d)} WHERE c.owner_key = ? ORDER BY c.last_message_at DESC LIMIT 50`,
+    [ownerKey],
+  );
+  return rows.map(toConversation);
 }
 
-export function listAllConversations(filter: { status?: "open" | "closed" } = {}): ConversationRecord[] {
+export async function listAllConversations(filter: { status?: "open" | "closed" } = {}): Promise<ConversationRecord[]> {
+  const d = await db();
   const where = filter.status ? "WHERE c.status = ?" : "";
   const params = filter.status ? [filter.status] : [];
-  return (
-    db().prepare(`${CONVERSATION_SELECT} ${where} ORDER BY c.last_message_at DESC LIMIT 500`).all(...params) as ConversationRow[]
-  ).map(toConversation);
+  const rows = await d.all<ConversationRow>(`${conversationSelect(d)} ${where} ORDER BY c.last_message_at DESC LIMIT 500`, params);
+  return rows.map(toConversation);
 }
 
-export function listMessages(conversationId: string): MessageRecord[] {
-  return (
-    db()
-      .prepare(
-        "SELECT id, created_at, author, author_name, body, meta FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid",
-      )
-      .all(conversationId) as MessageRow[]
-  ).map(toMessage);
+export async function listMessages(conversationId: string): Promise<MessageRecord[]> {
+  const d = await db();
+  const rows = await d.all<MessageRow>(
+    `SELECT id, created_at, author, author_name, body, meta FROM messages WHERE conversation_id = ? ORDER BY created_at, ${seq(d)}`,
+    [conversationId],
+  );
+  return rows.map(toMessage);
 }
 
-export function countMessages(conversationId: string, author: Author): number {
-  const row = db()
-    .prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND author = ?")
-    .get(conversationId, author) as { n: number };
-  return row.n;
+export async function countMessages(conversationId: string, author: Author): Promise<number> {
+  const row = await first<{ n: number | string }>("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND author = ?", [
+    conversationId,
+    author,
+  ]);
+  return Number(row?.n ?? 0);
 }
 
-export function setConversationStatus(id: string, status: "open" | "closed"): ConversationRecord | null {
-  db().prepare("UPDATE conversations SET status = ? WHERE id = ?").run(status, id);
+export async function setConversationStatus(id: string, status: "open" | "closed"): Promise<ConversationRecord | null> {
+  await (await db()).run("UPDATE conversations SET status = ? WHERE id = ?", [status, id]);
   return getConversation(id);
 }
 
-export function setConversationMode(id: string, mode: ConversationMode, handoffReason: string | null = null): ConversationRecord | null {
-  db()
-    .prepare("UPDATE conversations SET mode = ?, handoff_reason = ? WHERE id = ?")
-    .run(mode, mode === "human" ? handoffReason : null, id);
+export async function setConversationMode(
+  id: string,
+  mode: ConversationMode,
+  handoffReason: string | null = null,
+): Promise<ConversationRecord | null> {
+  await (await db()).run("UPDATE conversations SET mode = ?, handoff_reason = ? WHERE id = ?", [
+    mode,
+    mode === "human" ? handoffReason : null,
+    id,
+  ]);
   return getConversation(id);
 }
 
-export function setConversationTopic(id: string, topic: string) {
-  db().prepare("UPDATE conversations SET topic = ? WHERE id = ?").run(topic.slice(0, 40), id);
+export async function setConversationTopic(id: string, topic: string): Promise<void> {
+  await (await db()).run("UPDATE conversations SET topic = ? WHERE id = ?", [topic.slice(0, 40), id]);
 }
 
 /**
  * Marks the assistant as writing. Returns false if another reply is already
  * in progress, so two messages sent quickly don't produce two answers.
  */
-export function claimAiTurn(id: string): boolean {
+export async function claimAiTurn(id: string): Promise<boolean> {
   const now = new Date();
   const staleBefore = new Date(now.getTime() - AI_BUSY_STALE_MS).toISOString();
-  const res = db()
-    .prepare("UPDATE conversations SET ai_busy_since = ? WHERE id = ? AND (ai_busy_since IS NULL OR ai_busy_since < ?)")
-    .run(now.toISOString(), id, staleBefore);
-  return res.changes > 0;
+  const changed = await (await db()).run(
+    "UPDATE conversations SET ai_busy_since = ? WHERE id = ? AND (ai_busy_since IS NULL OR ai_busy_since < ?)",
+    [now.toISOString(), id, staleBefore],
+  );
+  return changed > 0;
 }
 
-export function releaseAiTurn(id: string) {
-  db().prepare("UPDATE conversations SET ai_busy_since = NULL WHERE id = ?").run(id);
+export async function releaseAiTurn(id: string): Promise<void> {
+  await (await db()).run("UPDATE conversations SET ai_busy_since = NULL WHERE id = ?", [id]);
 }
 
 // ---------------------------------------------------------------------------
@@ -582,46 +682,49 @@ type ArticleRow = {
   updated_at: string;
 };
 
+const COLLECTION_COLUMNS = "id, position, title_en, title_de, description_en, description_de";
+const ARTICLE_COLUMNS = "id, collection_id, position, title_en, title_de, body_en, body_de, published, updated_at";
+
 function toArticle(r: ArticleRow): HelpArticleRecord {
   return {
     id: r.id,
     collectionId: r.collection_id,
-    position: r.position,
+    position: Number(r.position),
     title: { en: r.title_en, de: r.title_de },
     body: { en: r.body_en, de: r.body_de },
-    published: r.published === 1,
+    published: Number(r.published) === 1,
     updatedAt: r.updated_at,
   };
 }
 
-export function listHelp(opts: { publishedOnly: boolean }): HelpCollectionRecord[] {
-  const conn = db();
-  const cols = conn.prepare("SELECT * FROM help_collections ORDER BY position, rowid").all() as CollectionRow[];
-  const arts = conn
-    .prepare(`SELECT * FROM help_articles ${opts.publishedOnly ? "WHERE published = 1" : ""} ORDER BY position, rowid`)
-    .all() as ArticleRow[];
+export async function listHelp(opts: { publishedOnly: boolean }): Promise<HelpCollectionRecord[]> {
+  const d = await db();
+  const cols = await d.all<CollectionRow>(`SELECT ${COLLECTION_COLUMNS} FROM help_collections ORDER BY position, ${seq(d)}`);
+  const arts = await d.all<ArticleRow>(
+    `SELECT ${ARTICLE_COLUMNS} FROM help_articles ${opts.publishedOnly ? "WHERE published = 1" : ""} ORDER BY position, ${seq(d)}`,
+  );
   return cols.map((c) => ({
     id: c.id,
-    position: c.position,
+    position: Number(c.position),
     title: { en: c.title_en, de: c.title_de },
     description: { en: c.description_en, de: c.description_de },
     articles: arts.filter((a) => a.collection_id === c.id).map(toArticle),
   }));
 }
 
-export function getArticle(id: string): HelpArticleRecord | null {
-  const row = db().prepare("SELECT * FROM help_articles WHERE id = ?").get(id) as ArticleRow | undefined;
+export async function getArticle(id: string): Promise<HelpArticleRecord | null> {
+  const row = await first<ArticleRow>(`SELECT ${ARTICLE_COLUMNS} FROM help_articles WHERE id = ?`, [id]);
   return row ? toArticle(row) : null;
 }
 
 /** Simple keyword search over published articles, best title matches first. */
-export function searchArticles(query: string, limit = 5): HelpArticleRecord[] {
+export async function searchArticles(query: string, limit = 5): Promise<HelpArticleRecord[]> {
   const words = query
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((w) => w.length > 2)
     .slice(0, 8);
-  const all = (db().prepare("SELECT * FROM help_articles WHERE published = 1").all() as ArticleRow[]).map(toArticle);
+  const all = (await (await db()).all<ArticleRow>(`SELECT ${ARTICLE_COLUMNS} FROM help_articles WHERE published = 1`)).map(toArticle);
   if (!words.length) return all.slice(0, limit);
   return all
     .map((a) => {
@@ -647,64 +750,74 @@ function slug(text: string): string {
   return `${base || "item"}-${randomUUID().slice(0, 6)}`;
 }
 
-export function saveCollection(input: {
+export async function saveCollection(input: {
   id?: string;
   position?: number;
   title: Record<Loc, string>;
   description: Record<Loc, string>;
-}): string {
-  const conn = db();
+}): Promise<string> {
+  const d = await db();
   const id = input.id || slug(input.title.en);
+  // Editing keeps the collection where it is; a new one goes last.
+  const existing = input.id ? await first<{ position: number }>("SELECT position FROM help_collections WHERE id = ?", [input.id]) : undefined;
   const position =
-    input.position ?? (conn.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM help_collections").get() as { p: number }).p;
-  conn
-    .prepare(
-      `INSERT INTO help_collections (id, position, title_en, title_de, description_en, description_de) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET position = excluded.position, title_en = excluded.title_en, title_de = excluded.title_de,
-         description_en = excluded.description_en, description_de = excluded.description_de`,
-    )
-    .run(id, position, input.title.en, input.title.de, input.description.en, input.description.de);
+    input.position ??
+    (existing
+      ? Number(existing.position)
+      : Number((await first<{ p: number }>("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM help_collections"))?.p ?? 0));
+  await d.run(
+    `INSERT INTO help_collections (id, position, title_en, title_de, description_en, description_de) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET position = excluded.position, title_en = excluded.title_en, title_de = excluded.title_de,
+       description_en = excluded.description_en, description_de = excluded.description_de`,
+    [id, position, input.title.en, input.title.de, input.description.en, input.description.de],
+  );
   return id;
 }
 
-export function deleteCollection(id: string): boolean {
-  return db().prepare("DELETE FROM help_collections WHERE id = ?").run(id).changes > 0;
+export async function deleteCollection(id: string): Promise<boolean> {
+  return (await (await db()).run("DELETE FROM help_collections WHERE id = ?", [id])) > 0;
 }
 
-export function saveArticle(input: {
+export async function saveArticle(input: {
   id?: string;
   collectionId: string;
   position?: number;
   title: Record<Loc, string>;
   body: Record<Loc, string>;
   published: boolean;
-}): string {
-  const conn = db();
+}): Promise<string> {
+  const d = await db();
   const id = input.id || slug(input.title.en);
+  // Editing keeps the article where it is; a new one, or one moved to another
+  // collection, goes last.
+  const existing = input.id
+    ? await first<{ position: number; collection_id: string }>("SELECT position, collection_id FROM help_articles WHERE id = ?", [input.id])
+    : undefined;
   const position =
     input.position ??
-    (
-      conn.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM help_articles WHERE collection_id = ?").get(input.collectionId) as {
-        p: number;
-      }
-    ).p;
-  conn
-    .prepare(
-      `INSERT INTO help_articles (id, collection_id, position, title_en, title_de, body_en, body_de, published, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET collection_id = excluded.collection_id, position = excluded.position,
-         title_en = excluded.title_en, title_de = excluded.title_de, body_en = excluded.body_en, body_de = excluded.body_de,
-         published = excluded.published, updated_at = excluded.updated_at`,
-    )
-    .run(
+    (existing && existing.collection_id === input.collectionId
+      ? Number(existing.position)
+      : Number(
+          (await first<{ p: number }>("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM help_articles WHERE collection_id = ?", [
+            input.collectionId,
+          ]))?.p ?? 0,
+        ));
+  await d.run(
+    `INSERT INTO help_articles (id, collection_id, position, title_en, title_de, body_en, body_de, published, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET collection_id = excluded.collection_id, position = excluded.position,
+       title_en = excluded.title_en, title_de = excluded.title_de, body_en = excluded.body_en, body_de = excluded.body_de,
+       published = excluded.published, updated_at = excluded.updated_at`,
+    [
       id, input.collectionId, position, input.title.en, input.title.de, input.body.en, input.body.de,
       input.published ? 1 : 0, new Date().toISOString(),
-    );
+    ],
+  );
   return id;
 }
 
-export function deleteArticle(id: string): boolean {
-  return db().prepare("DELETE FROM help_articles WHERE id = ?").run(id).changes > 0;
+export async function deleteArticle(id: string): Promise<boolean> {
+  return (await (await db()).run("DELETE FROM help_articles WHERE id = ?", [id])) > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +843,8 @@ type UpdateRow = {
   published: number;
 };
 
+const UPDATE_COLUMNS = "id, published_at, title_en, title_de, body_en, body_de, image_url, published";
+
 function toUpdate(r: UpdateRow): UpdateRecord {
   return {
     id: r.id,
@@ -737,37 +852,38 @@ function toUpdate(r: UpdateRow): UpdateRecord {
     title: { en: r.title_en, de: r.title_de },
     body: { en: r.body_en, de: r.body_de },
     imageUrl: r.image_url,
-    published: r.published === 1,
+    published: Number(r.published) === 1,
   };
 }
 
-export function listUpdates(opts: { publishedOnly: boolean }): UpdateRecord[] {
+export async function listUpdates(opts: { publishedOnly: boolean }): Promise<UpdateRecord[]> {
   const where = opts.publishedOnly ? "WHERE published = 1 AND published_at <= ?" : "";
   const params = opts.publishedOnly ? [new Date().toISOString()] : [];
-  return (db().prepare(`SELECT * FROM updates ${where} ORDER BY published_at DESC LIMIT 100`).all(...params) as UpdateRow[]).map(
-    toUpdate,
+  const rows = await (await db()).all<UpdateRow>(
+    `SELECT ${UPDATE_COLUMNS} FROM updates ${where} ORDER BY published_at DESC LIMIT 100`,
+    params,
   );
+  return rows.map(toUpdate);
 }
 
-export function saveUpdate(input: {
+export async function saveUpdate(input: {
   id?: string;
   publishedAt: string;
   title: Record<Loc, string>;
   body: Record<Loc, string>;
   imageUrl: string | null;
   published: boolean;
-}): string {
+}): Promise<string> {
   const id = input.id || slug(input.title.en);
-  db()
-    .prepare(
-      `INSERT INTO updates (id, published_at, title_en, title_de, body_en, body_de, image_url, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET published_at = excluded.published_at, title_en = excluded.title_en, title_de = excluded.title_de,
-         body_en = excluded.body_en, body_de = excluded.body_de, image_url = excluded.image_url, published = excluded.published`,
-    )
-    .run(id, input.publishedAt, input.title.en, input.title.de, input.body.en, input.body.de, input.imageUrl, input.published ? 1 : 0);
+  await (await db()).run(
+    `INSERT INTO updates (id, published_at, title_en, title_de, body_en, body_de, image_url, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET published_at = excluded.published_at, title_en = excluded.title_en, title_de = excluded.title_de,
+       body_en = excluded.body_en, body_de = excluded.body_de, image_url = excluded.image_url, published = excluded.published`,
+    [id, input.publishedAt, input.title.en, input.title.de, input.body.en, input.body.de, input.imageUrl, input.published ? 1 : 0],
+  );
   return id;
 }
 
-export function deleteUpdate(id: string): boolean {
-  return db().prepare("DELETE FROM updates WHERE id = ?").run(id).changes > 0;
+export async function deleteUpdate(id: string): Promise<boolean> {
+  return (await (await db()).run("DELETE FROM updates WHERE id = ?", [id])) > 0;
 }

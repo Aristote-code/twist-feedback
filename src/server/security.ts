@@ -29,8 +29,18 @@ export function corsHeaders(request: Request): Record<string, string> {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const self = new URL(request.url).origin;
-  if (origin !== self && !allowed.includes(origin)) return {};
+  // Same site: behind a proxy (Netlify, nginx) request.url may be an internal
+  // address, so the Host headers count too.
+  let originHost = "";
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return {};
+  }
+  const sameSite =
+    origin === new URL(request.url).origin ||
+    [request.headers.get("x-forwarded-host"), request.headers.get("host")].some((h) => h === originHost);
+  if (!sameSite && !allowed.includes(origin)) return {};
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

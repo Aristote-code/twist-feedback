@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   if (blocked) return json({ error: "This site isn't allowed to use the messenger." }, 403);
   const owner = resolveOwner(request);
   if (!owner) return json({ conversations: [] });
-  return json({ conversations: listConversationsForOwner(owner.ownerKey).map(toSummary) });
+  return json({ conversations: (await listConversationsForOwner(owner.ownerKey)).map(toSummary) });
 }
 
 export async function POST(request: Request) {
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   if (!message) return json({ error: "Write a message first." }, 400);
 
   const locale = LOCALES.includes(body.locale as Locale) ? (body.locale as string) : null;
-  const { conversation, message: first } = createConversation(
+  const { conversation, message: first } = await createConversation(
     owner,
     {
       source: typeof body.source === "string" ? body.source.slice(0, 50) : "unknown",

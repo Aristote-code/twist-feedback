@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   const pick = (v: { en: string; de: string }) => (de && v.de.trim() ? v.de : v.en);
 
   const content: MessengerContent = {
-    collections: listHelp({ publishedOnly: true })
+    collections: (await listHelp({ publishedOnly: true }))
       .filter((c) => c.articles.length)
       .map((c) => ({
         id: c.id,
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
         description: pick(c.description),
         articles: c.articles.map((a) => ({ id: a.id, title: pick(a.title), body: pick(a.body), updatedAt: a.updatedAt })),
       })),
-    updates: listUpdates({ publishedOnly: true }).map((u) => ({
+    updates: (await listUpdates({ publishedOnly: true })).map((u) => ({
       id: u.id,
       publishedAt: u.publishedAt,
       title: pick(u.title),

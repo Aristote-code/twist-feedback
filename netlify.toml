@@ -1,0 +1,10 @@
+# Netlify runs the Next.js app with its Next.js adapter (detected
+# automatically). Storage is Netlify Database (Postgres): installing
+# @netlify/database provisions it, and netlify/database/migrations/ is applied
+# on each deploy before it goes live.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
